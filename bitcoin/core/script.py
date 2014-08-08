@@ -889,7 +889,10 @@ def RawSignatureHash(script, txTo, inIdx, hashtype):
 
     if inIdx >= len(txTo.vin):
         return (HASH_ONE, "inIdx %d out of range (%d)" % (inIdx, len(txTo.vin)))
-    txtmp = copy.deepcopy(txTo)
+    txtmp = bitcoin.core.CTransaction()
+    txtmp.vin = [bitcoin.core.CTxIn(txin.prevout, txin.scriptSig) for txin in txTo.vin]
+    txtmp.vout = list(txTo.vout)
+    #txtmp = bitcoin.core.CTransaction.deserialize(txTo.serialize())
 
     for txin in txtmp.vin:
         txin.scriptSig = b''
