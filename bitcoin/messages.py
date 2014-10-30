@@ -27,6 +27,15 @@ MSG_TX = 1
 MSG_BLOCK = 2
 MSG_FILTERED_BLOCK = 3
 
+REJECT_MALFORMED = 0x01
+REJECT_INVALID = 0x10
+REJECT_OBSOLETE = 0x11
+REJECT_DUPLICATE = 0x12
+REJECT_NONSTANDARD = 0x40
+REJECT_DUST = 0x41
+REJECT_INSUFFICIENTFEE = 0x42
+REJECT_CHECKPOINT = 0x43
+
 
 class MsgSerializable(Serializable):
     def __init__(self, protover=PROTO_VERSION):
@@ -90,7 +99,7 @@ class MsgSerializable(Serializable):
             #        print("Going to deserialize '%s'" % msg)
             return cls.msg_deser(BytesIO(msg))
         else:
-            print("Command '%s' not in messagemap" % str(command, 'ascii'))
+            print("Command '%s' not in messagemap" % str(command))
             return None
 
     def stream_serialize(self, f):
@@ -375,6 +384,47 @@ class msg_getaddr(MsgSerializable):
 #msg_reply
 
 
+class msg_notfound(MsgSerializable):
+    command = b"notfound"
+
+    def __init__(self, protover=PROTO_VERSION):
+        super(msg_notfound, self).__init__(protover)
+        self.inv = []
+
+    @classmethod
+    def msg_deser(cls, f, protover=PROTO_VERSION):
+        c = cls()
+        c.inv = VectorSerializer.stream_deserialize(CInv, f)
+        return c
+
+    def msg_ser(self, f):
+        VectorSerializer.stream_serialize(CInv, self.inv, f)
+
+    def __repr__(self):
+        return "msg_notfound(inv=%s)" % (repr(self.inv))
+
+class msg_reject(MsgSerializable):
+    command = b"reject"
+
+    def __init__(self, protover=PROTO_VERSION):
+        super(msg_reject, self).__init__(protover)
+
+    @classmethod
+    def msg_deser(cls, f, protover=PROTO_VERSION):
+        c = cls()
+        c.strMsgType = VarStringSerializer.stream_deserialize(f)
+        c.nCode = struct.unpack(b"<b", ser_read(f, 1))[0]
+        c.strReason = VarStringSerializer.stream_deserialize(f)
+        return c
+
+    def msg_ser(self, f):
+        self.strMsgType.stream_serialize(f, True)
+        f.write(struct.pack(b"<b", self.nCode))
+        self.strReason.stream_serialize(f, True)
+
+    def __repr__(self):
+        return "msg_reject(strMsgType=%s nCode=0x%02X strReason=%s)" % (self.strMsgType, self.nCode, self.strReason)
+
 class msg_ping(MsgSerializable):
     command = b"ping"
 
@@ -434,7 +484,7 @@ class msg_mempool(MsgSerializable):
 msg_classes = [msg_version, msg_verack, msg_addr, msg_alert, msg_inv,
                msg_getdata, msg_getblocks, msg_getheaders,
                msg_headers, msg_tx, msg_block, msg_getaddr, msg_ping,
-               msg_pong, msg_mempool]
+               msg_pong, msg_mempool, msg_notfound, msg_reject]
 
 messagemap = {}
 for cls in msg_classes:
