@@ -1,5 +1,13 @@
-# Distributed under the MIT/X11 software license, see the accompanying
-# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+# Copyright (C) 2013-2015 The python-bitcoinlib developers
+#
+# This file is part of python-bitcoinlib.
+#
+# It is subject to the license terms in the LICENSE file found in the top-level
+# directory of this distribution.
+#
+# No part of python-bitcoinlib, including this file, may be copied, modified,
+# propagated, or distributed except according to the terms contained in the
+# LICENSE file.
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
@@ -24,6 +32,21 @@ class Test_str_value(unittest.TestCase):
         T(1001000000, '10.01')
         T(1012345678, '10.12345678')
 
+class Test_Money(unittest.TestCase):
+    def test_MoneyRange(self):
+        self.assertFalse(MoneyRange(-1))
+        self.assertTrue(MoneyRange(0))
+        self.assertTrue(MoneyRange(100000))
+        self.assertTrue(MoneyRange(21000000 * COIN)) # Maximum money on Bitcoin network
+        self.assertFalse(MoneyRange(21000001 * COIN))
+
+    def test_MoneyRangeCustomParams(self):
+        highMaxParamsType = type(str('CoreHighMainParams'), (CoreMainParams,object), {'MAX_MONEY': 22000000 * COIN })
+        highMaxParams = highMaxParamsType()
+        self.assertTrue(MoneyRange(21000001 * COIN, highMaxParams))
+        self.assertTrue(MoneyRange(22000000 * COIN, highMaxParams))
+        self.assertFalse(MoneyRange(22000001 * COIN, highMaxParams))
+
 class Test_CBlockHeader(unittest.TestCase):
     def test_serialization(self):
         genesis = CBlockHeader(nVersion=1,
@@ -38,6 +61,15 @@ class Test_CBlockHeader(unittest.TestCase):
 
         genesis2 = CBlockHeader.deserialize(serialized)
         self.assertEqual(genesis, genesis2)
+
+    def test_GetHash(self):
+        genesis = CBlockHeader(nVersion=1,
+                hashPrevBlock=lx('0000000000000000000000000000000000000000000000000000000000000000'),
+                hashMerkleRoot=lx('4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b'),
+                nTime=1231006505,
+                nBits=486604799,
+                nNonce=2083236893)
+        self.assertEqual(genesis.GetHash(), lx('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'))
 
     def test_calc_difficulty(self):
         def T(nbits, expected):
@@ -61,10 +93,21 @@ class Test_CBlock(unittest.TestCase):
                       lx('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'))
         self.assertEqual(serialized, initial_serialized)
 
+    def test_GetHash(self):
+        genesis = CBlock.deserialize(x('0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c0101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000'))
+        self.assertEqual(genesis.GetHash(), lx('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'))
+
+    def test_calc_merkle_root_of_empty_block(self):
+        """CBlock.calc_merkle_root() fails if vtx empty"""
+        block = CBlock()
+        with self.assertRaises(ValueError):
+            block.calc_merkle_root()
+
     def test_calc_merkle_root(self):
         # genesis
         block = CBlock.deserialize(x('0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c0101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000'))
         self.assertEqual(block.calc_merkle_root(), lx('4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b'))
+        self.assertEqual(block.vMerkleTree, (lx('4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b'),))
 
         # 170 two transactions
         block = CBlock.deserialize(x('0100000055bd840a78798ad0da853f68974f3d183e2bd1db6a842c1feecf222a00000000ff104ccb05421ab93e63f8c3ce5c2c2e9dbb37de2764b3a3175c8166562cac7d51b96a49ffff001d283e9e700201000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0704ffff001d0102ffffffff0100f2052a01000000434104d46c4968bde02899d2aa0963367c7a6ce34eec332b32e42e5f3407e052d64ac625da6f0718e7b302140434bd725706957c092db53805b821a85b23a7ac61725bac000000000100000001c997a5e56e104102fa209c6a852dd90660a20b2d9c352423edce25857fcd3704000000004847304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901ffffffff0200ca9a3b00000000434104ae1a62fe09c5f51b13905f07f06b99a2f7159b2225f374cd378d71302fa28414e7aab37397f554a7df5f142c21c1b7303b8a0626f1baded5c72a704f7e6cd84cac00286bee0000000043410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac00000000'))

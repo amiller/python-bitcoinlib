@@ -1,5 +1,13 @@
-# Distributed under the MIT/X11 software license, see the accompanying
-# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+# Copyright (C) 2013-2014 The python-bitcoinlib developers
+#
+# This file is part of python-bitcoinlib.
+#
+# It is subject to the license terms in the LICENSE file found in the top-level
+# directory of this distribution.
+#
+# No part of python-bitcoinlib, including this file, may be copied, modified,
+# propagated, or distributed except according to the terms contained in the
+# LICENSE file.
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
@@ -7,7 +15,7 @@ import json
 import unittest
 import os
 
-from bitcoin.core import COutPoint, CTxIn, CTxOut, CTransaction, CheckTransaction, CheckTransactionError, lx, x, b2x, ValidationError
+from bitcoin.core import *
 from bitcoin.core.scripteval import VerifyScript, SCRIPT_VERIFY_P2SH
 
 from bitcoin.tests.test_scripteval import parse_script
@@ -50,6 +58,28 @@ class Test_COutPoint(unittest.TestCase):
         T( COutPoint(lx('4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b'), 0),
           "COutPoint(lx('4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b'), 0)")
 
+    def test_str(self):
+        def T(outpoint, expected):
+            actual = str(outpoint)
+            self.assertEqual(actual, expected)
+        T(COutPoint(),
+          '0000000000000000000000000000000000000000000000000000000000000000:4294967295')
+        T(COutPoint(lx('4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b'), 0),
+                       '4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b:0')
+        T(COutPoint(lx('4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b'), 10),
+                       '4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b:10')
+
+class Test_CMutableOutPoint(unittest.TestCase):
+    def test_GetHash(self):
+        """CMutableOutPoint.GetHash() is not cached"""
+        outpoint = CMutableOutPoint()
+
+        h1 = outpoint.GetHash()
+        outpoint.n = 1
+
+        self.assertNotEqual(h1, outpoint.GetHash())
+
+
 class Test_CTxIn(unittest.TestCase):
     def test_is_final(self):
         self.assertTrue(CTxIn().is_final())
@@ -63,12 +93,22 @@ class Test_CTxIn(unittest.TestCase):
         T( CTxIn(),
           'CTxIn(COutPoint(), CScript([]), 0xffffffff)')
 
+class Test_CMutableTxIn(unittest.TestCase):
+    def test_GetHash(self):
+        """CMutableTxIn.GetHash() is not cached"""
+        txin = CMutableTxIn()
+
+        h1 = txin.GetHash()
+        txin.prevout.n = 1
+
+        self.assertNotEqual(h1, txin.GetHash())
+
 class Test_CTransaction(unittest.TestCase):
     def test_is_coinbase(self):
-        tx = CTransaction()
+        tx = CMutableTransaction()
         self.assertFalse(tx.is_coinbase())
 
-        tx.vin.append(CTxIn())
+        tx.vin.append(CMutableTxIn())
 
         # IsCoinBase() in reference client doesn't check if vout is empty
         self.assertTrue(tx.is_coinbase())

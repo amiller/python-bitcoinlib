@@ -1,17 +1,22 @@
-
+# Copyright (C) 2012-2015 The python-bitcoinlib developers
 #
-# core.py
+# This file is part of python-bitcoinlib.
 #
-# Distributed under the MIT/X11 software license, see the accompanying
-# file COPYING or http://www.opensource.org/licenses/mit-license.php.
+# It is subject to the license terms in the LICENSE file found in the top-level
+# directory of this distribution.
 #
+# No part of python-bitcoinlib, including this file, may be copied, modified,
+# propagated, or distributed except according to the terms contained in the
+# LICENSE file.
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+from __future__ import absolute_import, division, print_function
 
-import struct
-import socket
 import binascii
 import hashlib
+import socket
+import struct
+import sys
+import time
 
 from .script import CScript
 
@@ -19,33 +24,39 @@ from .serialize import *
 
 # Core definitions
 COIN = 100000000
-MAX_MONEY = 21000000 * COIN
 MAX_BLOCK_SIZE = 1000000
 MAX_BLOCK_SIGOPS = MAX_BLOCK_SIZE/50
 
-BIP0031_VERSION = 60000
-PROTO_VERSION = 60002
-MIN_PROTO_VERSION = 209
+def MoneyRange(nValue, params=None):
+    global coreparams
+    if not params:
+      params = coreparams
 
-CADDR_TIME_VERSION = 31402
+    return 0 <= nValue <= params.MAX_MONEY
 
-def MoneyRange(nValue):
-        return 0<= nValue <= MAX_MONEY
+def _py2_x(h):
+    """Convert a hex string to bytes"""
+    return binascii.unhexlify(h)
 
 def x(h):
     """Convert a hex string to bytes"""
-    import sys
-    if sys.version > '3':
-        return binascii.unhexlify(h.encode('utf8'))
-    else:
-        return binascii.unhexlify(h)
+    return binascii.unhexlify(h.encode('utf8'))
+
+def _py2_b2x(b):
+    """Convert bytes to a hex string"""
+    return binascii.hexlify(b)
 
 def b2x(b):
     """Convert bytes to a hex string"""
-    if sys.version > '3':
-        return binascii.hexlify(b).decode('utf8')
-    else:
-        return binascii.hexlify(b)
+    return binascii.hexlify(b).decode('utf8')
+
+def _py2_lx(h):
+    """Convert a little-endian hex string to bytes
+
+    Lets you write uint256's and uint160's the way the Satoshi codebase shows
+    them.
+    """
+    return binascii.unhexlify(h)[::-1]
 
 def lx(h):
     """Convert a little-endian hex string to bytes
@@ -53,11 +64,15 @@ def lx(h):
     Lets you write uint256's and uint160's the way the Satoshi codebase shows
     them.
     """
-    import sys
-    if sys.version > '3':
-        return binascii.unhexlify(h.encode('utf8'))[::-1]
-    else:
-        return binascii.unhexlify(h)[::-1]
+    return binascii.unhexlify(h.encode('utf8'))[::-1]
+
+def _py2_b2lx(b):
+    """Convert bytes to a little-endian hex string
+
+    Lets you show uint256's and uint160's the way the Satoshi codebase shows
+    them.
+    """
+    return binascii.hexlify(b[::-1])
 
 def b2lx(b):
     """Convert bytes to a little-endian hex string
@@ -65,10 +80,19 @@ def b2lx(b):
     Lets you show uint256's and uint160's the way the Satoshi codebase shows
     them.
     """
-    if sys.version > '3':
-        return binascii.hexlify(b[::-1]).decode('utf8')
-    else:
-        return binascii.hexlify(b[::-1])
+    return binascii.hexlify(b[::-1]).decode('utf8')
+
+if not (sys.version > '3'):
+    x = _py2_x
+    b2x = _py2_b2x
+    lx = _py2_lx
+    b2lx = _py2_b2lx
+
+del _py2_x
+del _py2_b2x
+del _py2_lx
+del _py2_b2lx
+
 
 def str_money_value(value):
     """Convert an integer money value to a fixed point string"""
@@ -86,18 +110,28 @@ class ValidationError(Exception):
     transactions, scripts, etc. is derived from this class.
     """
 
+def __make_mutable(cls):
+    # For speed we use a class decorator that removes the immutable
+    # restrictions directly. In addition the modified behavior of GetHash() and
+    # hash() is undone.
+    cls.__setattr__ = object.__setattr__
+    cls.__delattr__ = object.__delattr__
+    cls.GetHash = Serializable.GetHash
+    cls.__hash__ = Serializable.__hash__
+    return cls
 
-class COutPoint(Serializable):
+
+class COutPoint(ImmutableSerializable):
     """The combination of a transaction hash and an index n into its vout"""
     __slots__ = ['hash', 'n']
 
     def __init__(self, hash=b'\x00'*32, n=0xffffffff):
         if not len(hash) == 32:
             raise ValueError('COutPoint: hash must be exactly 32 bytes; got %d bytes' % len(hash))
-        self.hash = hash
+        object.__setattr__(self, 'hash', hash)
         if not (0 <= n <= 0xffffffff):
             raise ValueError('COutPoint: n must be in range 0x0 to 0xffffffff; got %x' % n)
-        self.n = n
+        object.__setattr__(self, 'n', n)
 
     @classmethod
     def stream_deserialize(cls, f):
@@ -119,7 +153,33 @@ class COutPoint(Serializable):
         else:
             return 'COutPoint(lx(%r), %i)' % (b2lx(self.hash), self.n)
 
-class CTxIn(Serializable):
+    def __str__(self):
+        return '%s:%i' % (b2lx(self.hash), self.n)
+
+    @classmethod
+    def from_outpoint(cls, outpoint):
+        """Create an immutable copy of an existing OutPoint
+
+        If output is already immutable (outpoint.__class__ is COutPoint) it is
+        returned directly.
+        """
+        if output.__class__ is COutPoint:
+            return output
+
+        else:
+            return cls(outpoint.hash, outpoint.n)
+
+@__make_mutable
+class CMutableOutPoint(COutPoint):
+    """A mutable COutPoint"""
+    __slots__ = []
+
+    @classmethod
+    def from_outpoint(cls, outpoint):
+        """Create a mutable copy of an existing COutPoint"""
+        return cls(outpoint.hash, outpoint.n)
+
+class CTxIn(ImmutableSerializable):
     """An input of a transaction
 
     Contains the location of the previous transaction's output that it claims,
@@ -127,14 +187,13 @@ class CTxIn(Serializable):
     """
     __slots__ = ['prevout', 'scriptSig', 'nSequence']
 
-    def __init__(self, prevout=None, scriptSig=CScript(), nSequence = 0xffffffff):
-        if prevout is None:
-            prevout = COutPoint()
-        self.prevout = prevout
-        self.scriptSig = scriptSig
+    def __init__(self, prevout=COutPoint(), scriptSig=CScript(), nSequence = 0xffffffff):
         if not (0 <= nSequence <= 0xffffffff):
             raise ValueError('CTxIn: nSequence must be an integer between 0x0 and 0xffffffff; got %x' % nSequence)
-        self.nSequence = nSequence
+        object.__setattr__(self, 'nSequence', nSequence)
+
+        object.__setattr__(self, 'prevout', prevout)
+        object.__setattr__(self, 'scriptSig', scriptSig)
 
     @classmethod
     def stream_deserialize(cls, f):
@@ -144,7 +203,7 @@ class CTxIn(Serializable):
         return cls(prevout, scriptSig, nSequence)
 
     def stream_serialize(self, f):
-        self.prevout.stream_serialize(f)
+        COutPoint.stream_serialize(self.prevout, f)
         BytesSerializer.stream_serialize(self.scriptSig, f)
         f.write(struct.pack(b"<I", self.nSequence))
 
@@ -154,7 +213,42 @@ class CTxIn(Serializable):
     def __repr__(self):
         return "CTxIn(%s, %s, 0x%x)" % (repr(self.prevout), repr(self.scriptSig), self.nSequence)
 
-class CTxOut(Serializable):
+    @classmethod
+    def from_txin(cls, txin):
+        """Create an immutable copy of an existing TxIn
+
+        If txin is already immutable (txin.__class__ is CTxIn) it is returned
+        directly.
+        """
+        if txin.__class__ is CTxIn:
+            return txin
+
+        else:
+            return cls(COutPoint.from_txout(txin.prevout), txin.scriptSig, txin.nSequence)
+
+@__make_mutable
+class CMutableTxIn(CTxIn):
+    """A mutable CTxIn"""
+    __slots__ = []
+
+    def __init__(self, prevout=None, scriptSig=CScript(), nSequence = 0xffffffff):
+        if not (0 <= nSequence <= 0xffffffff):
+            raise ValueError('CTxIn: nSequence must be an integer between 0x0 and 0xffffffff; got %x' % nSequence)
+        self.nSequence = nSequence
+
+        if prevout is None:
+            prevout = CMutableOutPoint()
+        self.prevout = prevout
+        self.scriptSig = scriptSig
+
+    @classmethod
+    def from_txin(cls, txin):
+        """Create a fully mutable copy of an existing TxIn"""
+        prevout = CMutableOutPoint.from_outpoint(txin.prevout)
+        return cls(prevout, txin.scriptSig, txin.nSequence)
+
+
+class CTxOut(ImmutableSerializable):
     """An output of a transaction
 
     Contains the public key that the next input must be able to sign with to
@@ -163,8 +257,8 @@ class CTxOut(Serializable):
     __slots__ = ['nValue', 'scriptPubKey']
 
     def __init__(self, nValue=-1, scriptPubKey=script.CScript()):
-        self.nValue = int(nValue)
-        self.scriptPubKey = scriptPubKey
+        object.__setattr__(self, 'nValue', int(nValue))
+        object.__setattr__(self, 'scriptPubKey', scriptPubKey)
 
     @classmethod
     def stream_deserialize(cls, f):
@@ -189,21 +283,47 @@ class CTxOut(Serializable):
         else:
             return "CTxOut(%d, %r)" % (self.nValue, self.scriptPubKey)
 
-class CTransaction(Serializable):
+    @classmethod
+    def from_txout(cls, txout):
+        """Create an immutable copy of an existing TxOut
+
+        If txout is already immutable (txout.__class__ is CTxOut) then it will
+        be returned directly.
+        """
+        if txout.__class__ is CTxOut:
+            return txout
+
+        else:
+            return cls(txout.nValue, txout.scriptPubKey)
+
+@__make_mutable
+class CMutableTxOut(CTxOut):
+    """A mutable CTxOut"""
+    __slots__ = []
+
+    @classmethod
+    def from_txout(cls, txout):
+        """Create a fullly mutable copy of an existing TxOut"""
+        return cls(txout.nValue, txout.scriptPubKey)
+
+class CTransaction(ImmutableSerializable):
     """A transaction"""
     __slots__ = ['nVersion', 'vin', 'vout', 'nLockTime']
 
-    def __init__(self, vin=None, vout=None, nLockTime=0, nVersion=1):
-        if vin is None:
-            vin = []
-        if vout is None:
-            vout = []
-        self.nVersion = nVersion
-        self.vin = vin
-        self.vout = vout
+    def __init__(self, vin=(), vout=(), nLockTime=0, nVersion=1):
+        """Create a new transaction
+
+        vin and vout are iterables of transaction inputs and outputs
+        respectively. If their contents are not already immutable, immutable
+        copies will be made.
+        """
         if not (0 <= nLockTime <= 0xffffffff):
             raise ValueError('CTransaction: nLockTime must be in range 0x0 to 0xffffffff; got %x' % nLockTime)
-        self.nLockTime = nLockTime
+        object.__setattr__(self, 'nLockTime', nLockTime)
+
+        object.__setattr__(self, 'nVersion', nVersion)
+        object.__setattr__(self, 'vin', tuple(CTxIn.from_txin(txin) for txin in vin))
+        object.__setattr__(self, 'vout', tuple(CTxOut.from_txout(txout) for txout in vout))
 
     @classmethod
     def stream_deserialize(cls, f):
@@ -225,19 +345,63 @@ class CTransaction(Serializable):
     def __repr__(self):
         return "CTransaction(%r, %r, %i, %i)" % (self.vin, self.vout, self.nLockTime, self.nVersion)
 
-class CBlockHeader(Serializable):
+    @classmethod
+    def from_tx(cls, tx):
+        """Create an immutable copy of a pre-existing transaction
+
+        If tx is already immutable (tx.__class__ is CTransaction) then it will
+        be returned directly.
+        """
+        if tx.__class__ is CTransaction:
+            return tx
+
+        else:
+            return cls(tx.vin, tx.vout, tx.nLockTime, tx.nVersion)
+
+
+@__make_mutable
+class CMutableTransaction(CTransaction):
+    """A mutable transaction"""
+    __slots__ = []
+
+    def __init__(self, vin=None, vout=None, nLockTime=0, nVersion=1):
+        if not (0 <= nLockTime <= 0xffffffff):
+            raise ValueError('CTransaction: nLockTime must be in range 0x0 to 0xffffffff; got %x' % nLockTime)
+        self.nLockTime = nLockTime
+
+        if vin is None:
+            vin = []
+        self.vin = vin
+
+        if vout is None:
+            vout = []
+        self.vout = vout
+        self.nVersion = nVersion
+
+    @classmethod
+    def from_tx(cls, tx):
+        """Create a fully mutable copy of a pre-existing transaction"""
+        vin = [CMutableTxIn.from_txin(txin) for txin in tx.vin]
+        vout = [CMutableTxOut.from_txout(txout) for txout in tx.vout]
+
+        return cls(vin, vout, tx.nLockTime, tx.nVersion)
+
+
+
+
+class CBlockHeader(ImmutableSerializable):
     """A block header"""
     __slots__ = ['nVersion', 'hashPrevBlock', 'hashMerkleRoot', 'nTime', 'nBits', 'nNonce']
 
     def __init__(self, nVersion=2, hashPrevBlock=b'\x00'*32, hashMerkleRoot=b'\x00'*32, nTime=0, nBits=0, nNonce=0):
-        self.nVersion = nVersion
+        object.__setattr__(self, 'nVersion', nVersion)
         assert len(hashPrevBlock) == 32
-        self.hashPrevBlock = hashPrevBlock
+        object.__setattr__(self, 'hashPrevBlock', hashPrevBlock)
         assert len(hashMerkleRoot) == 32
-        self.hashMerkleRoot = hashMerkleRoot
-        self.nTime = nTime
-        self.nBits = nBits
-        self.nNonce = nNonce
+        object.__setattr__(self, 'hashMerkleRoot', hashMerkleRoot)
+        object.__setattr__(self, 'nTime', nTime)
+        object.__setattr__(self, 'nBits', nBits)
+        object.__setattr__(self, 'nNonce', nNonce)
 
     @classmethod
     def stream_deserialize(cls, f):
@@ -280,33 +444,77 @@ class CBlockHeader(Serializable):
 
 class CBlock(CBlockHeader):
     """A block including all transactions in it"""
-    __slots__ = ['vtx']
+    __slots__ = ['vtx', 'vMerkleTree']
 
-    def __init__(self, nVersion=2, hashPrevBlock=b'\x00'*32, hashMerkleRoot=b'\x00'*32, nTime=0, nBits=0, nNonce=0, vtx=None):
+    @staticmethod
+    def build_merkle_tree_from_txids(txids):
+        """Build a full CBlock merkle tree from txids
+
+        txids - iterable of txids
+
+        Returns a new merkle tree in deepest first order. The last element is
+        the merkle root.
+
+        WARNING! If you're reading this because you're learning about crypto
+        and/or designing a new system that will use merkle trees, keep in mind
+        that the following merkle tree algorithm has a serious flaw related to
+        duplicate txids, resulting in a vulnerability. (CVE-2012-2459) Bitcoin
+        has since worked around the flaw, but for new applications you should
+        use something different; don't just copy-and-paste this code without
+        understanding the problem first.
+        """
+        merkle_tree = list(txids)
+
+        size = len(txids)
+        j = 0
+        while size > 1:
+            for i in range(0, size, 2):
+                i2 = min(i+1, size-1)
+                merkle_tree.append(Hash(merkle_tree[j+i] + merkle_tree[j+i2]))
+
+            j += size
+            size = (size + 1) // 2
+
+        return merkle_tree
+
+    @staticmethod
+    def build_merkle_tree_from_txs(txs):
+        """Build a full merkle tree from transactions"""
+        txids = [tx.GetHash() for tx in txs]
+        return CBlock.build_merkle_tree_from_txids(txids)
+
+    def calc_merkle_root(self):
+        """Calculate the merkle root
+
+        The calculated merkle root is not cached; every invocation
+        re-calculates it from scratch.
+        """
+        if not len(self.vtx):
+            raise ValueError('Block contains no transactions')
+        return self.build_merkle_tree_from_txs(self.vtx)[-1]
+
+    def __init__(self, nVersion=2, hashPrevBlock=b'\x00'*32, hashMerkleRoot=b'\x00'*32, nTime=0, nBits=0, nNonce=0, vtx=()):
+        """Create a new block"""
         super(CBlock, self).__init__(nVersion, hashPrevBlock, hashMerkleRoot, nTime, nBits, nNonce)
-        if not vtx:
-            vtx = []
-        self.vtx = vtx
+
+        vMerkleTree = tuple(CBlock.build_merkle_tree_from_txs(vtx))
+        object.__setattr__(self, 'vMerkleTree', vMerkleTree)
+        object.__setattr__(self, 'vtx', tuple(CTransaction.from_tx(tx) for tx in vtx))
 
     @classmethod
     def stream_deserialize(cls, f):
         self = super(CBlock, cls).stream_deserialize(f)
-        self.vtx = VectorSerializer.stream_deserialize(CTransaction, f)
+
+        vtx = VectorSerializer.stream_deserialize(CTransaction, f)
+        vMerkleTree = tuple(CBlock.build_merkle_tree_from_txs(vtx))
+        object.__setattr__(self, 'vMerkleTree', vMerkleTree)
+        object.__setattr__(self, 'vtx', tuple(vtx))
+
         return self
 
     def stream_serialize(self, f):
         super(CBlock, self).stream_serialize(f)
         VectorSerializer.stream_serialize(CTransaction, self.vtx, f)
-
-    @staticmethod
-    def calc_merkle_root_from_hashes(hashes):
-        while len(hashes) > 1:
-            newhashes = []
-            for i in range(0, len(hashes), 2):
-                i2 = min(i+1, len(hashes)-1)
-                newhashes.append(hashlib.sha256(hashlib.sha256(hashes[i] + hashes[i2]).digest()).digest())
-            hashes = newhashes
-        return hashes[0]
 
     def get_header(self):
         """Return the block header
@@ -320,21 +528,29 @@ class CBlock(CBlockHeader):
                             nBits=self.nBits,
                             nNonce=self.nNonce)
 
-    def calc_merkle_root(self):
-        hashes = []
-        for tx in self.vtx:
-            hashes.append(Hash(tx.serialize()))
-        return CBlock.calc_merkle_root_from_hashes(hashes)
+    def GetHash(self):
+        """Return the block hash
 
+        Note that this is the hash of the header, not the entire serialized
+        block.
+        """
+        try:
+            return self._cached_GetHash
+        except AttributeError:
+            _cached_GetHash = self.get_header().GetHash()
+            object.__setattr__(self, '_cached_GetHash', _cached_GetHash)
+            return _cached_GetHash
 
 class CoreChainParams(object):
     """Define consensus-critical parameters of a given instance of the Bitcoin system"""
+    MAX_MONEY = None
     GENESIS_BLOCK = None
     PROOF_OF_WORK_LIMIT = None
     SUBSIDY_HALVING_INTERVAL = None
     NAME = None
 
 class CoreMainParams(CoreChainParams):
+    MAX_MONEY = 21000000 * COIN
     NAME = 'mainnet'
     GENESIS_BLOCK = CBlock.deserialize(x('0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c0101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000'))
     SUBSIDY_HALVING_INTERVAL = 210000
@@ -378,6 +594,7 @@ def CheckTransaction(tx):
 
     Raises CheckTransactionError
     """
+    global coreparams
 
     if not tx.vin:
         raise CheckTransactionError("CheckTransaction() : vin empty")
@@ -393,7 +610,7 @@ def CheckTransaction(tx):
     for txout in tx.vout:
         if txout.nValue < 0:
             raise CheckTransactionError("CheckTransaction() : txout.nValue negative")
-        if txout.nValue > MAX_MONEY:
+        if txout.nValue > coreparams.MAX_MONEY:
             raise CheckTransactionError("CheckTransaction() : txout.nValue too high")
         nValueOut += txout.nValue
         if not MoneyRange(nValueOut):
@@ -455,7 +672,7 @@ def CheckBlockHeader(block_header, fCheckPoW = True, cur_time=None):
 
     # Check proof-of-work matches claimed amount
     if fCheckPoW:
-        CheckProofOfWork(Hash(block_header.serialize()), block_header.nBits)
+        CheckProofOfWork(block_header.GetHash(), block_header.nBits)
 
     # Check timestamp
     if block_header.nTime > cur_time + 2 * 60 * 60:
@@ -512,7 +729,7 @@ def CheckBlock(block, fCheckPoW = True, fCheckMerkleRoot = True, cur_time=None):
 
         CheckTransaction(tx)
 
-        txid = Hash(tx.serialize())
+        txid = tx.GetHash()
         if txid in unique_txids:
             raise CheckBlockError("CheckBlock() : duplicate transaction")
         unique_txids.add(txid)
@@ -524,3 +741,41 @@ def CheckBlock(block, fCheckPoW = True, fCheckMerkleRoot = True, cur_time=None):
     # Check merkle root
     if fCheckMerkleRoot and block.hashMerkleRoot != block.calc_merkle_root():
         raise CheckBlockError("CheckBlock() : hashMerkleRoot mismatch")
+
+__all__ = (
+        'Hash',
+        'Hash160',
+        'COIN',
+        'MAX_BLOCK_SIZE',
+        'MAX_BLOCK_SIGOPS',
+        'MoneyRange',
+        'x',
+        'b2x',
+        'lx',
+        'b2lx',
+        'str_money_value',
+        'ValidationError',
+        'COutPoint',
+        'CMutableOutPoint',
+        'CTxIn',
+        'CMutableTxIn',
+        'CTxOut',
+        'CMutableTxOut',
+        'CTransaction',
+        'CMutableTransaction',
+        'CBlockHeader',
+        'CBlock',
+        'CoreChainParams',
+        'CoreMainParams',
+        'CoreTestNetParams',
+        'CoreRegTestParams',
+        'CheckTransactionError',
+        'CheckTransaction',
+        'CheckBlockHeaderError',
+        'CheckProofOfWorkError',
+        'CheckProofOfWork',
+        'CheckBlockHeader',
+        'CheckBlockError',
+        'GetLegacySigOpCount',
+        'CheckBlock',
+)
