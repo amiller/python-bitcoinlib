@@ -339,7 +339,7 @@ class msg_headers(MsgSerializable):
         return c
 
     def msg_ser(self, f):
-        VectorSerializer.stream_serialize(CBlock, self.headers, f)
+        VectorSerializer.stream_serialize(CBlockHeader, self.headers, f)
 
     def __repr__(self):
         return "msg_headers(headers=%s)" % (repr(self.headers))
