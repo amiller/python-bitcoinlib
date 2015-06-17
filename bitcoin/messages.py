@@ -335,7 +335,7 @@ class msg_headers(MsgSerializable):
     @classmethod
     def msg_deser(cls, f, protover=PROTO_VERSION):
         c = cls()
-        c.headers = VectorSerializer.stream_deserialize(CBlock, f)
+        c.headers = VectorSerializer.stream_deserialize(CBlockHeader, f)
         return c
 
     def msg_ser(self, f):
